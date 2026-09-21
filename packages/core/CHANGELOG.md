@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Lag compensation (`Rewind`) gains a configurable per-target rewind window and strict, observable bounds:
+  - `attachAll`/`attach` accept `maxDepthMs` alongside `maxRewindMs` — retention (how long frames are kept) and query depth (how far back a read may aim) are now configured separately, per attach, as a number or a per-entity fn (per entity type).
+  - New strict verbs — `rewind.tryAt` / `tryLastSeenBy` / `tryValueAt`, `view.tryValue` / `tryRead` — reject with an observable reason (`not-synced` / `future` / `too-old` / `no-data` / `untracked`) instead of silently clamping to arbitrary old state or falling back live. The lenient `at`/`lastSeenBy`/`valueAt` call style is unchanged.
+  - `rewind.record(now)` commits are monotonic: duplicate or out-of-order frames are dropped (`false` returned), so history commit order always matches the server frame order.
+  - `view.debug` / `view.describe()` report which history frame(s) actually served the last read.
+  - The `at()` clamp window now follows the deepest retention of any attached group (previously always the Rewind-level default), so groups retaining more than the default are reachable by lenient aims too.
+
 ## 0.18.14
 
 - A room whose `onCreate()` throws is now disposed — its timers and presence subscriptions kept running, so one with `autoDispose = false` stayed in memory until the process restarted. `onDispose()` now also runs in this case, so it must tolerate a partially created room.

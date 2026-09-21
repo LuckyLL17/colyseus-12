@@ -584,6 +584,61 @@ field).
 > If you stamp render time yourself (or store it on the entity), use
 > `rewind.at(time)` — the same view, but you supply the time.
 
+### Strict rewinds: observable bounds (`tryAt` / `tryValue`)
+
+The lenient reads above **silently clamp** an out-of-window stamp to the oldest
+retained frame, and **silently fall back live** for an unsynced client or an
+untracked entity. For a hit test that must KNOW its aim was served exactly —
+not "whatever old state happened to be around" — the strict variants reject
+observably instead:
+
+```ts
+const aim = this.rewind.tryLastSeenBy(shooterId);        // or tryAt(renderTime)
+if (!aim.ok) return miss(shooterId, aim.reason);         // observable, not clamped
+const r = aim.view.tryValue(target, "x");                // per-field, per-target
+if (r.ok && overlaps(bullet, r.value, ...)) hit(target);
+// one-shot, same single-target style as valueAt():
+const y = this.rewind.tryValueAt(target, renderTime, "y");
+```
+
+Every rejection is `{ ok: false, reason, time, bound }` with `reason` one of:
+
+| `reason` | Meaning |
+|---|---|
+| `"not-synced"` | Stamp is `0` — the client's clock hasn't synced (the lenient live fallback, made visible) |
+| `"future"` | Stamp is ahead of the server clock — client clock skew (or spoofing) |
+| `"too-old"` | Older than the covering group's `maxDepthMs` — a late input asking for more history than allowed |
+| `"no-data"` | Within the allowed depth, but no retained frame reaches it — the entity spawned later, or frames were evicted |
+| `"untracked"` | The entity/field has no recorded history at all |
+
+Two knobs bound the window, per attach (a number, or a per-entity fn to choose
+**per entity type** within one collection):
+
+- `maxRewindMs` — **retention**: how long frames are kept (sizes the history ring).
+- `maxDepthMs` — **query depth**: how far back a strict read may aim before
+  `too-old`. Defaults to the retention (everything kept is queryable); set it
+  smaller to cap late-input rewinds while keeping a deep ring for other reads.
+
+```ts
+rewind.attachAll(state.enemies, { fields: ["x", "y"], maxRewindMs: 1000, maxDepthMs: 250 });
+rewind.attachAll(state.bosses,   { fields: ["x", "y"], maxDepthMs: (b) => b.elite ? 400 : 150 });
+```
+
+`rewind.record(now)` commits are **monotonic** — a duplicate or out-of-order
+timestamp is dropped (`false` returned), so history commit order always matches
+the server frame order and the same frame is never recorded twice. (The
+framework's per-broadcast auto-record already dedupes; the guard now covers
+manual `record()` callers too.)
+
+**Debug:** after any read, `view.debug` tells you which history frame(s)
+actually served it — `{ field, requested, at, from, to, interpolated, live,
+reason? }` — and `view.describe()` renders it as one log line:
+
+```
+rewind x: lerp frames [100..200] @ 150 (requested 150)
+rewind y: REJECTED too-old (requested 120)
+```
+
 **One delay, not two.** The input `renderDelay` is bound to the `Predict` lerp `delay`
 when you wire the input through `predict.reconciler`/`predict.sim`, so the server rewinds
 to the same instant that's on screen by construction — set the interp buffer once on
@@ -624,6 +679,8 @@ rewind then approximates.
 | "I hit them but no damage" on moving targets | Not rewinding (or rewinding to server-now). Use `rewind.lastSeenBy(shooterId)` (§6). |
 | Hits register *behind* a dead-reckoned target (where it already walked) | The type renders forward-reckoned but rewinds to the raw stamp (double compensation). Attach it `mode: "reckon"` on both sides (`rewind.attachAll` server, `predict.attachAll` client). |
 | Hits land slightly ahead of the crosshair | `MAX_REWIND_MS` too small — it truncates the real rewind (`renderDelay + RTT + a tick`); raise it. |
+| Strict hit tests reject `too-old` on high-RTT players | Their render time is older than the group's `maxDepthMs` (default: `maxRewindMs`). Raise the depth/retention past `renderDelay + RTT + a tick`, or accept the rejection as a miss policy. |
+| Strict hit tests reject `no-data` on fresh spawns | The entity's first recorded frame is newer than the requested time — nothing older exists. Fall back to the lenient read (clamps to the first frame) or treat as a miss. |
 | `rewind.lastSeenBy` throws | The room never called `defineInput()` (the stamps ride the input channel); or use `at(time)` with your own time. |
 | `room.clock` returns `performance.now()` | The room never called `defineInput()` (the clock rides input acks). |
 | Bullet overshoots / tunnels past a target | Point hit test on a fast projectile — use a swept (segment) test. |
@@ -640,7 +697,10 @@ rewind then approximates.
 | Server | `setFixedTimestep(step, hz, { subSteps })` | Fixed-step loop; advertises the tick rate (+ optional physics sub-steps per input — §5) |
 | Server | `rewind.attachAll(coll, { fields, mode: "snapshot" \| "reckon" })` | Per-attach lag-comp timeline: `reckon` groups rewind to the client's reconstructed sim instant, `snapshot` to the raw stamp |
 | Server | `allowRewindState({ maxRewindMs })` + `rewind.attachAll(coll, { fields })` | Record positions on each broadcast (fields a type lacks read live; untracked types read live) |
+| Server | `rewind.attachAll(coll, { maxRewindMs, maxDepthMs })` | Per-attach history retention + strict query depth — a number, or a per-entity fn to choose per entity type |
 | Server | `rewind.lastSeenBy(sid)` / `rewind.at(time)` | Rewound view (clamp + live-fallback baked in): `view.value(e, field)`, `view.read(e, fields, out?)` |
+| Server | `rewind.tryLastSeenBy(sid)` / `tryAt(time)` / `view.tryValue` / `tryRead` / `rewind.tryValueAt(e, t, f)` | Strict rewind: `{ ok:false, reason }` (`not-synced` / `future` / `too-old` / `no-data` / `untracked`) instead of silent clamp/live-fallback |
+| Server | `view.debug` / `view.describe()` | Which history frame(s) served the last read (requested → sampled time, frame times, lerp/hold/live/rejected) |
 | Server | `inputs.get(sid).renderTime` | Raw render time of the last consumed input (prefer `lastSeenBy`) |
 | Client | `room.input({ mode })` | Input transport; lag-comp `renderDelay` auto-binds to the `Predict` lerp `delay` when wired through `reconciler`/`sim` (pass `renderDelay` to override) |
 | Client | `Predict.get(room, opts)` + `attachAll` / `reconciler` / `sim` | Remote smoothing; local rollback for one flat-field entity (`reconciler`) or composite/engine state (`sim`) |

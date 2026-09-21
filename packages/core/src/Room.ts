@@ -1057,6 +1057,12 @@ export class Room<T extends RoomOptions = RoomOptions> {
    * broadcast rate differs from the sim rate (`patchRate ≠ timestep`). Call
    * `rewind.record()` yourself during a tick to take over that cadence (you then
    * own correctness against your own broadcast rate).
+   *
+   * Reads come in two flavors: lenient (`lastSeenBy`/`at`/`valueAt` — clamp +
+   * live-fallback baked in) and strict (`tryLastSeenBy`/`tryAt`/`tryValueAt` +
+   * `view.tryValue` — out-of-window aims reject with an observable reason).
+   * The window is per attach-group: `maxRewindMs` (retention) and `maxDepthMs`
+   * (strict query depth). See {@link Rewind}.
    */
   public allowRewindState(opts?: RewindOptions): Rewind {
     this.#rewind = Rewind.get(this, opts);

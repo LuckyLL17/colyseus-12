@@ -22,7 +22,7 @@ export { Server, defineRoom, defineServer, registerRoomDefinitions, unregisterRo
 export { Room, RoomInternalState, validate, type RoomOptions, type DefineInputOptions, type SimulationCallback, type FixedTimestepCallback, type StepContext, type MessageHandlerWithFormat, type Messages, type ExtractRoomState, type ExtractRoomMetadata, type ExtractRoomClient } from './Room.ts';
 export { InputBufferImpl, compileSanitizer } from './input/InputBuffer.ts';
 export { type InputAccessor, type InputAPI, type NormalizedInputOptions, type ConsumeOptions, type IdleInput, type IdleContext, type SanitizeInput, type NumericFieldsOf } from './input/types.ts';
-export { Rewind, RewindView, type RewindOptions, type RewindMode } from './Rewind.ts';
+export { Rewind, RewindView, type RewindOptions, type RewindMode, type RewindReject, type RewindRejection, type RewindFieldRejection, type RewindAimResult, type RewindValueResult, type RewindReadDebug } from './Rewind.ts';
 export {
   RoomPlugin, definePlugins, attachToTestRoom,
   type RoomPluginOrder, type PluginDependencies, type RoomPluginClass,
